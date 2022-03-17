@@ -127,7 +127,7 @@ func CreateOrUpdateVMAgent(ctx context.Context, cr *victoriametricsv1beta1.VMAge
 		l.Info("using cluster version of VMAgent with", "shards", shardsCount)
 		for i := 0; i < shardsCount; i++ {
 			shardedDeploy := newDeploy.DeepCopy()
-			addShardSettingsToVMAgent(i, shardsCount, shardedDeploy)
+			addShardSettingsToVMAgent(i, shardsCount, &shardedDeploy.Name, shardedDeploy.Spec.Selector, &shardedDeploy.Spec.Template)
 			if err := k8stools.HandleDeployUpdate(ctx, rclient, shardedDeploy); err != nil {
 				return reconcile.Result{}, err
 			}
@@ -419,13 +419,13 @@ func makeSpecForVMAgent(cr *victoriametricsv1beta1.VMAgent, c *config.BaseOperat
 	return vmAgentSpec, nil
 }
 
-func addShardSettingsToVMAgent(shardNum, shardsCount int, dep *appsv1.Deployment) {
-	dep.Name = fmt.Sprintf("%s-%d", dep.Name, shardNum)
+func addShardSettingsToVMAgent(shardNum, shardsCount int, name *string, labelSelector *metav1.LabelSelector, podTemplateSpec *corev1.PodTemplateSpec) {
+	*name = fmt.Sprintf("%s-%d", *name, shardNum)
 	// need to mutate selectors ?
-	dep.Spec.Selector.MatchLabels["shard-num"] = strconv.Itoa(shardNum)
-	dep.Spec.Template.Labels["shard-num"] = strconv.Itoa(shardNum)
-	for i := range dep.Spec.Template.Spec.Containers {
-		container := &dep.Spec.Template.Spec.Containers[i]
+	labelSelector.MatchLabels["shard-num"] = strconv.Itoa(shardNum)
+	podTemplateSpec.Labels["shard-num"] = strconv.Itoa(shardNum)
+	for i := range podTemplateSpec.Spec.Containers {
+		container := &podTemplateSpec.Spec.Containers[i]
 		if container.Name == "vmagent" {
 			args := container.Args
 			// filter extraArgs defined by user
