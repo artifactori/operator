@@ -147,8 +147,7 @@ func CreateOrUpdateVMAgent(ctx context.Context, cr *victoriametricsv1beta1.VMAge
 	return reconcile.Result{}, nil
 }
 
-// newDeployForVMAgent builds vmagent deployment spec.
-func newDeployForVMAgent(cr *victoriametricsv1beta1.VMAgent, c *config.BaseOperatorConf, ssCache *scrapesSecretsCache) (*appsv1.Deployment, error) {
+func copyCRAndInjectDefault(cr *victoriametricsv1beta1.VMAgent, c *config.BaseOperatorConf) *victoriametricsv1beta1.VMAgent {
 	cr = cr.DeepCopy()
 
 	// inject default
@@ -161,10 +160,12 @@ func newDeployForVMAgent(cr *victoriametricsv1beta1.VMAgent, c *config.BaseOpera
 	if cr.Spec.Image.PullPolicy == "" {
 		cr.Spec.Image.PullPolicy = corev1.PullIfNotPresent
 	}
+	return cr
+}
 
-	if cr.Spec.Port == "" {
-		cr.Spec.Port = c.VMAgentDefault.Port
-	}
+// newDeployForVMAgent builds vmagent deployment spec.
+func newDeployForVMAgent(cr *victoriametricsv1beta1.VMAgent, c *config.BaseOperatorConf, ssCache *scrapesSecretsCache) (*appsv1.Deployment, error) {
+	cr = copyCRAndInjectDefault(cr, c)
 
 	podSpec, err := makeSpecForVMAgent(cr, c, ssCache)
 	if err != nil {
