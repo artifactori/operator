@@ -14,6 +14,7 @@ import (
 	"github.com/VictoriaMetrics/operator/controllers/factory/psp"
 	"github.com/VictoriaMetrics/operator/controllers/factory/vmagent"
 	"github.com/VictoriaMetrics/operator/internal/config"
+	"github.com/go-logr/logr"
 	"github.com/hashicorp/go-version"
 	"gopkg.in/yaml.v2"
 	appsv1 "k8s.io/api/apps/v1"
@@ -111,16 +112,30 @@ func CreateOrUpdateVMAgent(ctx context.Context, cr *victoriametricsv1beta1.VMAge
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("cannot get remote write secrets for vmagent: %w", err)
 	}
+	// cluster
+	deploymentNames, err := deployVMAgentDeployment(l, cr, c, ssCache, ctx, rclient)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+
+	if err := finalize.RemoveOrphanedDeployments(ctx, rclient, cr, deploymentNames); err != nil {
+		return reconcile.Result{}, err
+	}
+	l.Info("vmagent deploy reconciled")
+
+	return reconcile.Result{}, nil
+}
+
+func deployVMAgentDeployment(l logr.Logger, cr *victoriametricsv1beta1.VMAgent, c *config.BaseOperatorConf, ssCache *scrapesSecretsCache, ctx context.Context, rclient client.Client) (map[string]struct{}, error) {
 	l.Info("create or update vm agent deploy")
 
 	newDeploy, err := newDeployForVMAgent(cr, c, ssCache)
 	if err != nil {
-		return reconcile.Result{}, fmt.Errorf("cannot build new deploy for vmagent: %w", err)
+		return nil, fmt.Errorf("cannot build new deploy for vmagent: %w", err)
 	}
 
 	l = l.WithValues("vmagent.deploy.name", newDeploy.Name, "vmagent.deploy.namespace", newDeploy.Namespace)
 
-	// cluster
 	deploymentNames := make(map[string]struct{})
 	if cr.Spec.ShardCount != nil && *cr.Spec.ShardCount > 1 {
 		shardsCount := *cr.Spec.ShardCount
@@ -129,22 +144,17 @@ func CreateOrUpdateVMAgent(ctx context.Context, cr *victoriametricsv1beta1.VMAge
 			shardedDeploy := newDeploy.DeepCopy()
 			addShardSettingsToVMAgent(i, shardsCount, &shardedDeploy.Name, shardedDeploy.Spec.Selector, &shardedDeploy.Spec.Template)
 			if err := k8stools.HandleDeployUpdate(ctx, rclient, shardedDeploy); err != nil {
-				return reconcile.Result{}, err
+				return nil, err
 			}
 			deploymentNames[shardedDeploy.Name] = struct{}{}
 		}
 	} else {
 		if err := k8stools.HandleDeployUpdate(ctx, rclient, newDeploy); err != nil {
-			return reconcile.Result{}, err
+			return nil, err
 		}
 		deploymentNames[newDeploy.Name] = struct{}{}
 	}
-	if err := finalize.RemoveOrphanedDeployments(ctx, rclient, cr, deploymentNames); err != nil {
-		return reconcile.Result{}, err
-	}
-	l.Info("vmagent deploy reconciled")
-
-	return reconcile.Result{}, nil
+	return deploymentNames, nil
 }
 
 func copyCRAndInjectDefault(cr *victoriametricsv1beta1.VMAgent, c *config.BaseOperatorConf) *victoriametricsv1beta1.VMAgent {
